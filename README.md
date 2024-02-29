@@ -50,7 +50,7 @@ Navigate to http://127.0.0.1:8000/starred to view the starred repositories.
 To authenticate: curl -v http://localhost:8000/login/cli
 Follow the instructions given to enter the user code in https://github.com/login/device.
 
-To retrieve starred repositories after authentication: curl http://localhost:8000/starred
+To retrieve starred repositories after authentication: curl -v http://localhost:8000/starred
 
 // PS. In cli mode, the token stays in memory until overwritten or the .token file is removed
 
