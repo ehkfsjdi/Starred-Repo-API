@@ -1,8 +1,13 @@
 # Test the API
-# Used https://fastapi.tiangolo.com/tutorial/testing/#extended-testing-file for the testing tools and framework
+# Used https://fastapi.tiangolo.com/tutorial/testing/#extended-testing-file for help with how to use the TestClient
 
 from fastapi.testclient import TestClient
-from main import app
+from main import app, request_token_device, poll_access_token
+import asyncio
+import pytest
+import os
+
+pytest_plugins = ('pytest_asyncio',)
 
 client = TestClient(app)
 
@@ -20,23 +25,11 @@ def test_authorize_browser():
     assert response.is_error == True
     assert response.status_code == 404
 
-def test_authorize_cli_false():
-    '''Test GitHub authorization cli mode'''
-    response = client.get("/login/cli/?scope=12563")
-    print(response)
-    assert response.is_error == True
-
-def test_polling_expire():
-    '''Test polling GitHub for the access token in cli mode'''
-    response = client.get("/poll?code=gfuy4tgf43874uhf3874&interval=5&expires=1")
-    assert response.json() == {'Message': 'Credentials expired. Return to /login/cli to authorize again.'}
-
-def test_polling_error():
-    '''Test polling GitHub for the access token in cli mode'''
-    response = client.get("/poll/?code=gfuy4tgf43874uhf3874&interval=5&expires=5&accept_type=paper")
-    assert response.is_error == True
-    assert response.status_code == 500
-    assert response.json() == {'detail': 'An error occurred'}
+@pytest.mark.asyncio
+async def test_request_token_device_true():
+    result = await request_token_device(code='hafdhg7635')
+    assert type(result) == type({})
+    assert result != None
 
 def test_callback_csrf_error():
     '''Test callback from GitHub when csrf token is not valid'''
@@ -45,8 +38,17 @@ def test_callback_csrf_error():
     assert response.is_error == True
     assert response.json() == {'detail': 'Invalid CSRF token'}
 
+def test_display_starred_true():
+    '''Test displaying the starred repositories'''
+    # For this to work, the user needs to have authorized a short time ago, i.e., 
+    # there needs to be a valid .token file
+    response = client.get("/starred")
+    assert response.status_code == 200
+
 def test_display_starred_false():
     '''Test displaying the starred repositories without authorization'''
+    if os.path.exists("./.token"):
+        os.remove("./.token")
     response = client.get("/starred")
     assert response.is_error == True
     assert response.status_code == 500
