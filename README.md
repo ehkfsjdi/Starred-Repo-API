@@ -26,12 +26,14 @@ The configuration can be changed by changing the aforementioned parameters in th
 http://127.0.0.1:8000/login/browser?signup=false
 
 
-**Secrets**
+***Secrets***
 The secrets are in a environment file .env. You need to create your own env-file and have a running GitHub Oauth application to run the API.
 The architecture of the env-file:
-CLIENT_ID = '***'
+```
+CLIENT_ID = 'your_client_id'
 REDIRECT_URI = 'http://127.0.0.1:8000/callback'
-CLIENT_SECRET = '***'
+CLIENT_SECRET = 'your_client_secret'
+```
 
 ## Running the API
 To run the application, type on command line:
