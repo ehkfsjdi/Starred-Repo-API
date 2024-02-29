@@ -3,14 +3,15 @@
 # Used https://stackoverflow.com/questions/72975593/where-to-store-tokens-secrets-with-fastapi-python for using a session to store the access token
 # Secret handling was modeled after: https://blog.gitguardian.com/how-to-handle-secrets-in-python/
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.responses import RedirectResponse, JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 import httpx
-from utils import get_csrf_token, format_repo_list
+from utils import get_csrf_token, format_repo_list, write_token
 import uuid
 from dotenv import dotenv_values
 import time
+import os
 
 # Get secrets from the environment file
 secrets = dotenv_values(".env")
@@ -50,8 +51,10 @@ async def authorize(request: Request, login: str = '', signup: str = 'true',
     return RedirectResponse(res.headers['location'])
 
 
-@app.get("/login/cli", response_class=RedirectResponse)
-async def authorize(scope = 'repo'):
+#@app.get("/login/cli", response_class=RedirectResponse)
+@app.get("/login/cli")
+async def authorize(background_tasks: BackgroundTasks, 
+                    scope: str = 'repo'):
     '''Authorize the application using cli'''
 
     # Get the user's GitHub identity
@@ -69,13 +72,17 @@ async def authorize(scope = 'repo'):
     
     result = res.json()
 
-    return RedirectResponse(f'/poll?user_code={result["user_code"]}&verification_uri={result["verification_uri"]}&code={result["device_code"]}&interval={result["interval"]}&expires=5&message=Enter the user code in browser using the given verification url.')
+    # Start a background task that polls GitHub for the access token
+    # This: https://fastapi.tiangolo.com/tutorial/background-tasks/ was used to determine how to use background tasks
+    background_tasks.add_task(poll_access_token, code=result["device_code"], interval=result["interval"])
+    
+    return {'Message': f'Please enter the user code: {result["user_code"]} to the verification url: {result["verification_uri"]} in a browser.'}
 
 
 # Used https://docs.github.com/en/rest/activity/starring?apiVersion=2022-11-28 for creating the query and choosing parameters
-@app.get("/callback", response_class=RedirectResponse)
-async def get_access_token(request: Request, code: str, state: str, 
-                           accept_type: str = 'application/json'):
+#@app.get("/callback", response_class=Union[RedirectResponse, JSONResponse])
+@app.get("/callback")
+async def get_access_token(request: Request, code: str, state: str):
     '''Get the access token from GitHub in browser mode'''
 
     # Check that the CSRF token is unchanged
@@ -85,8 +92,7 @@ async def get_access_token(request: Request, code: str, state: str,
     
     # Exchange the received code for the access token
     access_url = 'https://github.com/login/oauth/access_token'
-    access_url = 'https://?kjbad'
-    header = {'Accept': accept_type}
+    header = {'Accept': 'application/json'}
     data = {'client_id': secrets['CLIENT_ID'], 'client_secret': secrets['CLIENT_SECRET'], 
             'code': code, 'redirect_uri': secrets['REDIRECT_URI']}
     
@@ -101,64 +107,91 @@ async def get_access_token(request: Request, code: str, state: str,
                 return JSONResponse({'error': result["error"], 'detail': result["error_description"], 'Message': 'Return to /login/browser to get a new code.'})
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-
+        
     # Save the access token into the session backend
     request.session['access_token'] = result['access_token']
 
-    return RedirectResponse('/starred')
+    return JSONResponse({'Message': 'Authentication successful'})
 
 
-@app.get("/poll")
-async def poll_access_token(request: Request, interval: int, expires: int, 
-                            code: str, accept_type: str = 'application/json'):
-    '''Poll for the access token from GitHub in cli mode'''
-
-    # Exchange the received code for the access token
+async def request_token_device(code: str):
+    '''Request the access token from GitHub using device flow.'''
     access_url = 'https://github.com/login/oauth/access_token'
-    grant_type = f'urn:ietf:params:oauth:grant-type:{code}'
-    header = {'Accept': accept_type}
+    header = {'Accept': 'application/json'}
     data = {'client_id': secrets['CLIENT_ID'], 'device_code': code, 
-            'grant_type': grant_type}
-    print(request.session)
+            'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'}
     
-    # Start a timer
-    start_time = time.time()
-    # Poll for the access token
+    # Send POST request
     async with httpx.AsyncClient() as client:
-        while (time.time() - start_time) < expires:
-            print(time.time() - start_time, expires)
-            try:
-                res = await client.post(access_url, headers=header, data=data)
-                result = res.json()
-                res.raise_for_status()
-                print(res, result)
-            except httpx.HTTPError as exc:
-                raise HTTPException(status_code=500, detail=str(exc))
+        try:
+            res = await client.post(access_url, headers=header, data=data)
+            result = res.json()
+            res.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        
+    return result
 
-            # If the result contains the access token, we can stop polling
-            if 'access_token' in result:
-                request.session['access_token'] = result['access_token']
-                return RedirectResponse('/starred')
 
-            # Sleep for the duration of the min polling interval
-            time.sleep(interval)
+# Used https://docs.github.com/en/apps/creating-github-apps/writing-code-for-a-github-app/building-a-cli-with-a-github-app#write-the-cli to figure out a working architecture for the polling
+async def poll_access_token(interval: int, code: str):
+    '''Poll for the access token from GitHub in cli mode'''
+    
+    #while True:
+    while True:
+        result = await request_token_device(code)
 
-    return {'Message': 'Credentials expired. Return to /login/cli to authorize again.'}
+        # If the result contains the access token, we can stop polling
+        if 'access_token' in result.keys():
+            break
+        # Otherwise there was an error response
+        else:
+            if result['error'] == 'authorization_pending':
+                # Continue polling after the min interval, the user has not yet entered the code
+                time.sleep(interval)
+            elif result['error'] == 'slow_down':
+                # Too fast polling, increase interval with 5 seconds
+                time.sleep(interval + 5)
+            elif result['error'] == 'expired_token':
+                # The token has expired, restart authorization process
+                print('Credentials expired. Return to /login/cli to authorize again.')
+                return 1
+            elif result['error'] == 'access_denied':
+                # Process cancelled by user, stop
+                print('Login process stopped by user.')
+                return 1
+
+    # Write the access token into a file
+    write_token(result['access_token'])
+
+    return 0
 
 
 @app.get("/starred")
-async def display_starred(request: Request, accept: str = 'application/vnd.github+json',
-                          sort: str = 'created', direction: str = 'desc',
-                          per_page: int = 30, page: int = 1):
+async def display_starred(request: Request, sort: str = 'created', 
+                          direction: str = 'desc', per_page: int = 30, 
+                          page: int = 1):
     '''Display the list of repositories starred by the authenticated user'''
 
+    # If we have the access token in the session use it
+    if request.session != {}:
+        token = request.session.get('access_token')
+    # Else, check if the token is stored in the .token file
+    elif os. path. exists('./.token'):
+        # Read the token
+        f = open("./.token", "r")
+        token = f.read()
+    else:
+        return {'error': 'You are missign the access token. Authorize again from /login/browser or /login/cli'}
+    
     # Get the starred repositories
     starred_url = 'https://api.github.com/user/starred'
-    token = request.session.get('access_token')
-    headers = {'Accept': accept, 'Authorization': f'Bearer {token}'}
+    headers = {'Accept': 'application/vnd.github+json', 
+               'Authorization': f'Bearer {token}'}
     params = {'sort': sort, 'direction': direction, 
               'per_page': per_page, 'page': page}
-    print(request.session)
+    
+    # Perform the GET request
     async with httpx.AsyncClient() as client:
         try:
             res = await client.get(starred_url, headers=headers, params=params)
