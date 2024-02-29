@@ -1,4 +1,4 @@
-# Starred_Repo_API
+# Starred-Repo-API
 An API for fetching the starred public GitHub repositories of an authenticated user.
 The dependencies are in requirements.txt.
 The API can be used with two modes: browser and cli.
