@@ -44,14 +44,10 @@ The root url is: http://127.0.0.1:8000/
 Navigate to http://127.0.0.1:8000/login/browser to login. You'll be redirected to http://127.0.0.1:8000/starred where the starred repositories are displayed.
 
 ### Cli Mode
------
 To authenticate: curl -v http://localhost:8000/login/cli
-The redirect includes an url of form 'http://localhost:8000/poll?user_code=...&verification_uri=https://github.com/login/device&code=...&interval=...&expires=...&message=Enter%20the%20user%20code%20in%20browser%20using%20the%20given%20verification%20url.'.
-Visit the verification_uri (https://github.com/login/device) and type in the user code from the aforementioned redirection url.
+Follow the instructions given to enter the user code in https://github.com/login/device.
 
-To retrieve starred repositories: curl http://localhost:8000/starred
-------
-
+To retrieve starred repositories after authentication: curl http://localhost:8000/starred
 
 ## Testing
 To test the application, run the tests using pytest with the following command:
