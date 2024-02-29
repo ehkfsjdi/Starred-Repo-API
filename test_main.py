@@ -2,7 +2,7 @@
 # Used https://fastapi.tiangolo.com/tutorial/testing/#extended-testing-file for help with how to use the TestClient
 
 from fastapi.testclient import TestClient
-from main import app, request_token_device, poll_access_token
+from main import app, request_token_device
 import asyncio
 import pytest
 import os
@@ -49,6 +49,6 @@ def test_display_starred_false():
     '''Test displaying the starred repositories without authorization'''
     if os.path.exists("./.token"):
         os.remove("./.token")
-    response = client.get("/starred")
+    response = client.get(f"/starred")
     assert response.is_error == True
     assert response.status_code == 500
